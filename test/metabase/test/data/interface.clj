@@ -9,25 +9,21 @@
             [clojure.tools.reader.edn :as edn]
             [environ.core :refer [env]]
             [medley.core :as m]
-            [metabase
-             [db :as mdb]
-             [driver :as driver]
-             [query-processor :as qp]
-             [util :as u]]
-            [metabase.models
-             [database :refer [Database]]
-             [field :as field :refer [Field]]
-             [table :refer [Table]]]
+            [metabase.db :as mdb]
+            [metabase.driver :as driver]
+            [metabase.models.database :refer [Database]]
+            [metabase.models.field :as field :refer [Field]]
+            [metabase.models.table :refer [Table]]
             [metabase.plugins.classloader :as classloader]
+            [metabase.query-processor :as qp]
             [metabase.test.initialize :as initialize]
-            [metabase.util
-             [date-2 :as u.date]
-             [schema :as su]]
+            [metabase.util :as u]
+            [metabase.util.date-2 :as u.date]
+            [metabase.util.schema :as su]
             [potemkin.types :as p.types]
             [pretty.core :as pretty]
             [schema.core :as s]
-            [toucan.db :as db])
-  (:import clojure.lang.Keyword))
+            [toucan.db :as db]))
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                   Dataset Definition Record Types & Protocol                                   |
@@ -44,7 +40,7 @@
    :base-type                        (s/cond-pre {:native su/NonBlankString} su/FieldType)
    (s/optional-key :special-type)    (s/maybe su/FieldType)
    (s/optional-key :visibility-type) (s/maybe (apply s/enum field/visibility-types))
-   (s/optional-key :fk)              (s/maybe s/Keyword)
+   (s/optional-key :fk)              (s/maybe su/KeywordOrString)
    (s/optional-key :field-comment)   (s/maybe su/NonBlankString)})
 
 (def ^:private ValidFieldDefinition
@@ -95,7 +91,7 @@
 ;;; |                                            Loading Test Extensions                                             |
 ;;; +----------------------------------------------------------------------------------------------------------------+
 
-(declare before-run after-run)
+(declare before-run)
 
 (defonce ^:private has-done-before-run (atom #{}))
 
@@ -170,7 +166,7 @@
   []
   (the-driver-with-test-extensions (or driver/*driver* :h2)))
 
-(defn escaped-name
+(defn escaped-database-name
   "Return escaped version of database name suitable for use as a filename / database name / etc."
   ^String [^DatabaseDefinition {:keys [database-name]}]
   {:pre [(string? database-name)]}
@@ -247,7 +243,6 @@
 
 (defmethod before-run ::test-extensions [_]) ; default-impl is a no-op
 
-
 (defmulti dbdef->connection-details
   "Return the connection details map that should be used to connect to the Database we will create for
   `database-definition`.
@@ -259,17 +254,29 @@
   dispatch-on-driver-with-test-extensions
   :hierarchy #'driver/hierarchy)
 
-
 (defmulti create-db!
   "Create a new database from `database-definition`, including adding tables, fields, and foreign key constraints,
-  and add the appropriate data. This method should drop existing databases with the same name if applicable, unless
-  the skip-drop-db? arg is true. This is to workaround a scenario where the postgres driver terminates the connection
-  before dropping the DB and causes some tests to fail. (This refers to creating the actual *DBMS* database itself,
-  *not* a Metabase `Database` object.)
+  and load the appropriate data. (This refers to creating the actual *DBMS* database itself, *not* a Metabase
+  `Database` object.)
 
   Optional `options` as third param. Currently supported options include `skip-drop-db?`. If unspecified,
-  `skip-drop-db?` should default to `false`."
+  `skip-drop-db?` should default to `false`.
+
+  This method should drop existing databases with the same name if applicable, unless the `skip-drop-db?` arg is
+  truthy. This is to work around a scenario where the Postgres driver terminates the connection before dropping the DB
+  and causes some tests to fail.
+
+  This method is not expected to return anything; use `dbdef->connection-details` to get connection details for this
+  database after you create it."
   {:arglists '([driver database-definition & {:keys [skip-drop-db?]}])}
+  dispatch-on-driver-with-test-extensions
+  :hierarchy #'driver/hierarchy)
+
+(defmulti destroy-db!
+  "Destroy the database created for `database-definition`, if one exists. This is only called if loading data fails for
+  one reason or another, to revert the changes made thus far; implementations should clean up everything related to
+  the database in question."
+  {:arglists '([driver database-definition])}
   dispatch-on-driver-with-test-extensions
   :hierarchy #'driver/hierarchy)
 
@@ -343,14 +350,14 @@
 (defmulti count-with-template-tag-query
   "Generate a native query for the count of rows in `table` matching a set of conditions where `field-name` is equal to
   a param `value`."
-  ^{:arglists '([driver table-name field-name param-type])}
+  {:arglists '([driver table-name field-name param-type])}
   dispatch-on-driver-with-test-extensions
   :hierarchy #'driver/hierarchy)
 
 (defmulti count-with-field-filter-query
   "Generate a native query that returns the count of a Table with `table-name` with a field filter against a Field with
   `field-name`."
-  ^{:arglists '([driver table-name field-name])}
+  {:arglists '([driver table-name field-name])}
   dispatch-on-driver-with-test-extensions
   :hierarchy #'driver/hierarchy)
 

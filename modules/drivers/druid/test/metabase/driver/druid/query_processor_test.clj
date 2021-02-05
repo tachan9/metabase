@@ -4,15 +4,14 @@
             [clojure.test :refer :all]
             [java-time :as t]
             [medley.core :as m]
-            [metabase
-             [driver :as driver]
-             [models :refer [Field Metric Table]]
-             [query-processor :as qp]
-             [test :as mt]
-             [util :as u]]
             [metabase.db.metadata-queries :as metadata-queries]
+            [metabase.driver :as driver]
             [metabase.driver.druid.query-processor :as druid.qp]
+            [metabase.models :refer [Field Metric Table]]
+            [metabase.query-processor :as qp]
+            [metabase.test :as mt]
             [metabase.timeseries-query-processor-test.util :as tqpt]
+            [metabase.util :as u]
             [metabase.util.date-2 :as u.date]))
 
 (defn- str->absolute-dt [s]
@@ -234,7 +233,8 @@
   (->> (metadata-queries/table-rows-sample (Table (mt/id :checkins))
          [(Field (mt/id :checkins :id))
           (Field (mt/id :checkins :venue_name))
-          (Field (mt/id :checkins :timestamp))])
+          (Field (mt/id :checkins :timestamp))]
+         (constantly conj))
        (sort-by first)
        (take 5)))
 
@@ -344,9 +344,7 @@
 
 (deftest start-of-week-test
   (mt/test-driver :druid
-    (testing (str "Count the number of events in the given week. Metabase uses Sunday as the start of the week, Druid by "
-                  "default will use Monday. All of the below events should happen in one week. Using Druid's default "
-                  "grouping, 3 of the events would have counted for the previous week.")
+    (testing (str "Count the number of events in the given week. ")
       (is (= [["2015-10-04" 9]]
              (druid-query-returning-rows
                {:filter      [:between !day.timestamp "2015-10-04" "2015-10-10"]
@@ -582,3 +580,63 @@
                 :breakout   [$venue_category_name $user_name]
                 :order-by   [[:desc [:aggregation 0]] [:asc $checkins.venue_category_name]]
                 :limit      5}))))))
+
+(deftest numeric-filter-test
+  (mt/test-driver :druid
+    (testing
+        (tqpt/with-flattened-dbdef
+          (letfn [(compiled [query]
+                    (-> (qp/query->native query) :query (select-keys [:filter :queryType])))]
+            (doseq [[message field] {"Make sure we can filter by numeric columns (#10935)" :venue_price
+                                     "We should be able to filter by Metrics (#11823)"     :count}
+                    :let            [field-clause [:field-id (mt/id :checkins field)]
+                                     field-name   (name field)]]
+              (testing message
+                (testing "scan query"
+                  (let [query (mt/mbql-query checkins
+                                {:fields   [$id $venue_price $venue_name]
+                                 :filter   [:= field-clause 1]
+                                 :order-by [[:desc $id]]
+                                 :limit    5})]
+                    (is (= {:filter    {:type :selector, :dimension field-name, :value 1}
+                            :queryType :scan}
+                           (compiled query)))
+                    (is (= ["931" "1" "Kinaree Thai Bistro"]
+                           (mt/first-row (qp/process-query query))))))
+
+                (testing "topN query"
+                  (let [query (mt/mbql-query checkins
+                                {:aggregation [[:count]]
+                                 :breakout    [$venue_price]
+                                 :filter      [:= field-clause 1]})]
+                    (is (= {:filter    {:type :selector, :dimension field-name, :value 1}
+                            :queryType :topN}
+                           (compiled query)))
+                    (is (= ["1" 221]
+                           (mt/first-row (qp/process-query query))))))
+
+                (testing "groupBy query"
+                  (let [query (mt/mbql-query checkins
+                                {:aggregation [[:aggregation-options [:distinct $checkins.venue_name] {:name "__count_0"}]]
+                                 :breakout    [$venue_category_name $user_name]
+                                 :order-by    [[:desc [:aggregation 0]] [:asc $checkins.venue_category_name]]
+                                 :filter      [:= field-clause 1]})]
+                    (is (= {:filter    {:type :selector, :dimension field-name, :value 1}
+                            :queryType :groupBy}
+                           (compiled query)))
+                    (is (= (case field
+                             :count       ["Bar" "Felipinho Asklepios" 8]
+                             :venue_price ["Mexican" "Conchúr Tihomir" 4])
+                           (mt/first-row (qp/process-query query))))))
+
+                (testing "timeseries query"
+                  (let [query (mt/mbql-query checkins
+                                {:aggregation [[:count]]
+                                 :filter      [:= field-clause 1]})]
+                    (is (= {:queryType :timeseries
+                            :filter    {:type :selector, :dimension field-name, :value 1}}
+                           (compiled query)))
+                    (is (= (case field
+                             :count       [1000]
+                             :venue_price [221])
+                           (mt/first-row (qp/process-query query)))))))))))))

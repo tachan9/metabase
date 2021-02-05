@@ -1,11 +1,8 @@
 (ns metabase.mbql.schema
   "Schema for validating a *normalized* MBQL query. This is also the definitive grammar for MBQL, wow!"
-  (:refer-clojure
-   :exclude
-   [count distinct min max + - / * and or not = < > <= >= time case concat replace])
-  (:require [clojure
-             [core :as core]
-             [set :as set]]
+  (:refer-clojure :exclude [count distinct min max + - / * and or not not-empty = < > <= >= time case concat replace])
+  (:require [clojure.core :as core]
+            [clojure.set :as set]
             [metabase.mbql.schema.helpers :refer [defclause is-clause? one-of]]
             [metabase.mbql.util.match :as match]
             [metabase.util.schema :as su]
@@ -159,7 +156,8 @@
   {(s/optional-key :database_type) (s/maybe su/NonBlankString)
    (s/optional-key :base_type)     (s/maybe su/FieldType)
    (s/optional-key :special_type)  (s/maybe su/FieldType)
-   (s/optional-key :unit)          (s/maybe DatetimeFieldUnit)})
+   (s/optional-key :unit)          (s/maybe DatetimeFieldUnit)
+   (s/optional-key :name)          (s/maybe su/NonBlankString)})
 
 ;; Arguments to filter clauses are automatically replaced with [:value <value> <type-info>] clauses by the
 ;; `wrap-value-literals` middleware. This is done to make it easier to implement query processors, because most driver
@@ -504,6 +502,11 @@
 (defclause ^:sugar is-null,  field Field)
 (defclause ^:sugar not-null, field Field)
 
+;; These are rewritten as `[:or [:= <field> nil] [:= <field> ""]]` and
+;; `[:and [:not= <field> nil] [:not= <field> ""]]`
+(defclause ^:sugar is-empty,  field Field)
+(defclause ^:sugar not-empty, field Field)
+
 (def ^:private StringFilterOptions
   {(s/optional-key :case-sensitive) s/Bool}) ; default true
 
@@ -556,7 +559,7 @@
     ;; filters drivers must implement
     and or not = != < > <= >= between starts-with ends-with contains
     ;; SUGAR filters drivers do not need to implement
-    does-not-contain inside is-null not-null time-interval segment)))
+    does-not-contain inside is-empty not-empty is-null not-null time-interval segment)))
 
 (def Filter
   "Schema for a valid MBQL `:filter` clause."
@@ -618,7 +621,7 @@
 (defclause ^{:requires-features #{:standard-deviation-aggregations}} stddev
   field-or-expression FieldOrExpressionDef)
 
-(defclause ^{:requires-features #{:standard-deviation-aggregations}} var
+(defclause ^{:requires-features #{:standard-deviation-aggregations}} [ag:var var]
   field-or-expression FieldOrExpressionDef)
 
 (defclause ^{:requires-features #{:percentile-aggregations}} median
@@ -641,7 +644,7 @@
   (s/if (partial is-clause? arithmetic-expressions)
     ArithmeticExpression
     (one-of count avg cum-count cum-sum distinct stddev sum min max metric share count-where
-            sum-where case median percentile var)))
+            sum-where case median percentile ag:var)))
 
 (def ^:private UnnamedAggregation
   (s/recursive #'UnnamedAggregation*))

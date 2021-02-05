@@ -1,12 +1,13 @@
 (ns metabase.query-processor.middleware.binning-test
-  (:require [expectations :refer [expect]]
-            [metabase
-             [test :as mt]
-             [util :as u]]
+  (:require [clojure.test :refer :all]
+            [expectations :refer [expect]]
+            [metabase.models.card :refer [Card]]
             [metabase.models.field :as field :refer [Field]]
             [metabase.query-processor.middleware.binning :as binning]
             [metabase.query-processor.test-util :as qp.test-util]
+            [metabase.test :as mt]
             [metabase.test.data :as data]
+            [metabase.util :as u]
             [toucan.util.test :as tt]))
 
 (expect
@@ -156,3 +157,17 @@
                    :breakout     [[:binning-strategy [:field-id (u/get-id field)] :default]]}}
        :type     :query
        :database (data/id)}))))
+
+(deftest bining-nested-questions-test
+  (mt/with-temp Card [{card-id :id} {:dataset_query {:database (mt/id)
+                                                     :type     :query
+                                                     :query    {:source-table (mt/id :venues)}}}]
+    (is (= [[1 22]
+            [2 59]
+            [3 13]
+            [4 6]]
+         (->> (mt/run-mbql-query nil
+                {:source-table (str "card__" card-id)
+                 :breakout     [[:binning-strategy [:field-literal "PRICE" :type/Float] :default]]
+                 :aggregation  [[:count]]})
+              (mt/formatted-rows [int int]))))))

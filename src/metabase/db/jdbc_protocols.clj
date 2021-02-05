@@ -6,16 +6,11 @@
             [clojure.string :as str]
             [clojure.tools.logging :as log]
             [java-time :as t]
-            [metabase.plugins.classloader :as classloader]
+            [metabase.db.connection :as mdb.connection]
             [metabase.util.date-2 :as u.date])
   (:import java.io.BufferedReader
            [java.sql PreparedStatement ResultSet ResultSetMetaData Types]
-           [java.time Instant LocalDate LocalDateTime LocalTime OffsetDateTime OffsetTime ZonedDateTime]))
-
-(def ^:private db-type
-  (delay
-    (classloader/require 'metabase.db)
-    ((resolve 'metabase.db/db-type))))
+           [java.time Instant LocalDate LocalDateTime LocalTime OffsetDateTime OffsetTime ZonedDateTime ZoneOffset]))
 
 (defn- set-object
   [^PreparedStatement stmt ^Integer index object ^Integer target-sql-type]
@@ -41,7 +36,7 @@
 
   OffsetDateTime
   (set-parameter [t stmt i]
-    (if (= @db-type :mysql)
+    (if (= (mdb.connection/db-type) :mysql)
       ;; Regardless of session timezone it seems to be the case that OffsetDateTimes get normalized to UTC inside MySQL
       ;;
       ;; Since MySQL TIMESTAMPs aren't timezone-aware this means comparisons are done between timestamps in the report
@@ -88,7 +83,14 @@
 
   org.h2.jdbc.JdbcClob
   (result-set-read-column [clob _ _]
-    (clob->str clob)))
+    (clob->str clob))
+
+  org.h2.api.TimestampWithTimeZone
+  (result-set-read-column [t _ _]
+    (let [date        (t/local-date (.getYear t) (.getMonth t) (.getDay t))
+          time        (LocalTime/ofNanoOfDay (.getNanosSinceMidnight t))
+          zone-offset (ZoneOffset/ofTotalSeconds (* (.getTimeZoneOffsetMins t) 60))]
+      (t/offset-date-time date time zone-offset))))
 
 (defmulti ^:private read-column
   {:arglists '([rs rsmeta i])}
@@ -101,7 +103,7 @@
 
 (defmethod read-column Types/TIMESTAMP
   [^ResultSet rs ^ResultSetMetaData rsmeta ^Integer i]
-  (case @db-type
+  (case (mdb.connection/db-type)
     :postgres
     ;; for some reason postgres `TIMESTAMP WITH TIME ZONE` columns still come back as `Type/TIMESTAMP`, which seems
     ;; like a bug with the JDBC driver?
@@ -134,7 +136,7 @@
 
 (defmethod read-column Types/TIME
   [^ResultSet rs _ ^Integer i]
-  (case @db-type
+  (case (mdb.connection/db-type)
     :postgres
     ;; Sometimes Postgres times come back as strings like `07:23:18.331+00` (no minute in offset) and there's a bug in
     ;; the JDBC driver where it can't parse those correctly. We can do it ourselves in that case.

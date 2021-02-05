@@ -3,16 +3,16 @@
   response with all the metadata for `:api`."
   (:require [cheshire.core :as json]
             [java-time :as t]
-            [metabase.query-processor.streaming
-             [common :as common]
-             [interface :as i]]
+            [metabase.query-processor.streaming.common :as common]
+            [metabase.query-processor.streaming.interface :as i]
             [metabase.util.date-2 :as u.date])
   (:import [java.io BufferedWriter OutputStream OutputStreamWriter]
            java.nio.charset.StandardCharsets))
 
 (defmethod i/stream-options :json
   [_]
-  {:content-type "applicaton/json; charset=utf-8"
+  {:content-type "application/json; charset=utf-8"
+   :status       200
    :headers      {"Content-Disposition" (format "attachment; filename=\"query_result_%s.json\""
                                                 (u.date/format (t/zoned-date-time)))}})
 
@@ -40,7 +40,7 @@
 
 (defmethod i/stream-options :api
   [stream-type]
-  {:content-type "applicaton/json; charset=utf-8"})
+  {:content-type "application/json; charset=utf-8"})
 
 (defn- map->serialized-json-kvs
   "{:a 100, :b 200} ; -> \"a\":100,\"b\":200"

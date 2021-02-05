@@ -2,11 +2,10 @@
   "Druid driver."
   (:require [clj-http.client :as http]
             [metabase.driver :as driver]
-            [metabase.driver.druid
-             [client :as client]
-             [execute :as execute]
-             [query-processor :as qp]
-             [sync :as sync]]
+            [metabase.driver.druid.client :as client]
+            [metabase.driver.druid.execute :as execute]
+            [metabase.driver.druid.query-processor :as qp]
+            [metabase.driver.druid.sync :as sync]
             [metabase.query-processor.context :as context]
             [metabase.util.ssh :as ssh]))
 
@@ -32,8 +31,13 @@
 
 (defmethod driver/execute-reducible-query :druid
   [_ query context respond]
-  (execute/execute-reducible-query (partial client/do-query-with-cancellation (context/canceled-chan context)) query respond))
+  (execute/execute-reducible-query (partial client/do-query-with-cancellation (context/canceled-chan context))
+                                   query respond))
 
 (doseq [[feature supported?] {:set-timezone            true
                               :expression-aggregations true}]
   (defmethod driver/supports? [:druid feature] [_ _] supported?))
+
+(defmethod driver/db-start-of-week :druid
+  [_]
+  :sunday)

@@ -1,15 +1,14 @@
 (ns metabase.driver.googleanalytics
   (:require [cheshire.core :as json]
             [clojure.string :as str]
-            [metabase
-             [driver :as driver]
-             [util :as u]]
+            [medley.core :as m]
+            [metabase.driver :as driver]
             [metabase.driver.google :as google]
-            [metabase.driver.googleanalytics
-             [client :as client]
-             [execute :as execute]
-             [metadata :as metadata]
-             [query-processor :as qp]]
+            [metabase.driver.googleanalytics.client :as client]
+            [metabase.driver.googleanalytics.execute :as execute]
+            [metabase.driver.googleanalytics.metadata :as metadata]
+            [metabase.driver.googleanalytics.query-processor :as qp]
+            [metabase.util :as u]
             [metabase.util.i18n :refer [tru]])
   (:import [com.google.api.services.analytics Analytics Analytics$Data$Ga$Get]
            [com.google.api.services.analytics.model Column Profile Profiles Webproperties Webproperty]
@@ -55,13 +54,14 @@
 ;;; ------------------------------------------------- describe-table -------------------------------------------------
 
 (defn- describe-columns [database]
-  (set (for [^Column column (metadata/columns database)
+  (set (for [[idx ^Column column] (m/indexed (metadata/columns database))
              :let [ga-type (metadata/column-attribute column :dataType)]]
-         {:name          (.getId column)
-          :base-type     (if (= (.getId column) "ga:date")
-                           :type/Date
-                           (execute/ga-type->base-type ga-type))
-          :database-type ga-type})))
+         {:name              (.getId column)
+          :base-type         (if (= (.getId column) "ga:date")
+                               :type/Date
+                               (execute/ga-type->base-type ga-type))
+          :database-type     ga-type
+          :database-position idx})))
 
 (defmethod driver/describe-table :googleanalytics
   [_ database table]
@@ -114,6 +114,8 @@
                  (json/parse-string query keyword)
                  query)
         client (client/database->client database)]
+    (assert (not (str/blank? (:metrics query)))
+            ":metrics is required in a Google Analytics query")
     ;; `end-date` is inclusive!!!
     (u/prog1 (.get (.ga (.data client))
                    (:ids query)

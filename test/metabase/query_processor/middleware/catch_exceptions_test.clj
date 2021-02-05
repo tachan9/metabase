@@ -1,15 +1,12 @@
 (ns metabase.query-processor.middleware.catch-exceptions-test
   (:require [clojure.test :refer :all]
-            [metabase
-             [query-processor :as qp]
-             [test :as mt]]
-            [metabase.models
-             [permissions :as perms]
-             [permissions-group :as group]]
-            [metabase.query-processor
-             [context :as context]
-             [error-type :as error-type]]
+            [metabase.models.permissions :as perms]
+            [metabase.models.permissions-group :as group]
+            [metabase.query-processor :as qp]
+            [metabase.query-processor.context :as context]
+            [metabase.query-processor.error-type :as error-type]
             [metabase.query-processor.middleware.catch-exceptions :as catch-exceptions]
+            [metabase.test :as mt]
             [metabase.test.data :as data]
             [metabase.test.data.users :as test-users]
             [metabase.test.util.log :as tu.log]
@@ -134,17 +131,20 @@
     (testing (str "If someone doesn't have native query execution permissions, they shouldn't see the native version of "
                   "the query in the error response")
       (is (schema= {:native (s/eq nil), :preprocessed (s/pred map?), s/Any s/Any}
-                   (test-users/with-test-user :rasta
-                     (qp/process-userland-query
-                      (data/mbql-query venues {:fields [!month.id]}))))))
+                   (mt/suppress-output
+                     (test-users/with-test-user :rasta
+                       (qp/process-userland-query
+                        (data/mbql-query venues {:fields [!month.id]})))))))
 
     (testing "They should see it if they have ad-hoc native query perms"
       (perms/grant-native-readwrite-permissions! (group/all-users) (data/id))
+      ;; this is not actually a valid query
       (is (schema= {:native       (s/eq {:query  (str "SELECT parsedatetime(formatdatetime(\"PUBLIC\".\"VENUES\".\"ID\", 'yyyyMM'), 'yyyyMM') "
                                                       "AS \"ID\" FROM \"PUBLIC\".\"VENUES\" LIMIT 1048576")
                                          :params nil})
                     :preprocessed (s/pred map?)
                     s/Any         s/Any}
-                   (test-users/with-test-user :rasta
-                     (qp/process-userland-query
-                      (data/mbql-query venues {:fields [!month.id]}))))))))
+                   (mt/suppress-output
+                     (test-users/with-test-user :rasta
+                       (qp/process-userland-query
+                        (data/mbql-query venues {:fields [!month.id]})))))))))

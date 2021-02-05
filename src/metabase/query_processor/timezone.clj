@@ -2,9 +2,8 @@
   "Functions for fetching the timezone for the current query."
   (:require [clojure.tools.logging :as log]
             [java-time :as t]
-            [metabase
-             [config :as config]
-             [driver :as driver]]
+            [metabase.config :as config]
+            [metabase.driver :as driver]
             [metabase.query-processor.store :as qp.store]
             [metabase.util.i18n :refer [tru]])
   (:import java.time.ZonedDateTime))
@@ -61,7 +60,7 @@
   (.. (t/system-clock) getZone getId))
 
 (defn requested-timezone-id
-  "The timezone that we would *like* to run a query in, regardless of whether we are actaully able to do so. This is
+  "The timezone that we would *like* to run a query in, regardless of whether we are actually able to do so. This is
   always equal to the value of the `report-timezone` Setting (if it is set), otherwise the database timezone (if known),
   otherwise the system timezone."
   ^String []

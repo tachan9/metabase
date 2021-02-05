@@ -2,10 +2,9 @@
   "Logic for initializing different components that need to be initialized when running tests."
   (:require [clojure.string :as str]
             [colorize.core :as colorize]
-            [metabase
-             [config :as config]
-             [util :as u]]
-            [metabase.plugins.classloader :as classloader]))
+            [metabase.config :as config]
+            [metabase.plugins.classloader :as classloader]
+            [metabase.util :as u]))
 
 (defmulti ^:private do-initialization!
   "Perform component-specific initialization. This is guaranteed to only be called once."
@@ -99,6 +98,10 @@
   (initialize-if-needed! :test-users)
   (classloader/require 'metabase.test.initialize.test-users-personal-collections)
   ((resolve 'metabase.test.initialize.test-users-personal-collections/init!)))
+
+(define-initialization :events
+  (classloader/require 'metabase.test.initialize.events)
+  ((resolve 'metabase.test.initialize.events/init!)))
 
 (defn- all-components
   "Set of all components/initialization steps that are defined."

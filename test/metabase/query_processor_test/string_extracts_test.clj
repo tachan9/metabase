@@ -1,8 +1,7 @@
 (ns metabase.query-processor-test.string-extracts-test
   (:require [clojure.test :refer :all]
-            [metabase
-             [query-processor-test :refer :all]
-             [test :as mt]]
+            [metabase.query-processor-test :refer :all]
+            [metabase.test :as mt]
             [metabase.test.data :as data]))
 
 (defn- test-string-extract
@@ -57,7 +56,9 @@
 
 (deftest test-concat
   (mt/test-drivers (mt/normal-drivers-with-feature :expressions)
-    (is (= "foobar" (test-string-extract [:concat "foo" "bar"])))))
+    (is (= "foobar" (test-string-extract [:concat "foo" "bar"])))
+    (testing "Does concat work with >2 args"
+      (is (= "foobar" (test-string-extract [:concat "f" "o" "o" "b" "a" "r"]))))))
 
 (deftest test-regex-match-first
   (mt/test-drivers (mt/normal-drivers-with-feature :expressions :regex)

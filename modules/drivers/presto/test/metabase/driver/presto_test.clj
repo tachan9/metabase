@@ -4,21 +4,17 @@
             [clojure.test :refer :all]
             [expectations :refer [expect]]
             [java-time :as t]
-            [metabase
-             [driver :as driver]
-             [query-processor :as qp]
-             [test :as mt]]
             [metabase.db.metadata-queries :as metadata-queries]
-            [metabase.driver
-             [presto :as presto]
-             [util :as driver.u]]
+            [metabase.driver :as driver]
+            [metabase.driver.presto :as presto]
             [metabase.driver.sql.query-processor :as sql.qp]
-            [metabase.models
-             [field :refer [Field]]
-             [table :as table :refer [Table]]]
-            [metabase.test
-             [fixtures :as fixtures]
-             [util :as tu]]
+            [metabase.driver.util :as driver.u]
+            [metabase.models.field :refer [Field]]
+            [metabase.models.table :as table :refer [Table]]
+            [metabase.query-processor :as qp]
+            [metabase.test :as mt]
+            [metabase.test.fixtures :as fixtures]
+            [metabase.test.util :as tu]
             [metabase.test.util.log :as tu.log]
             [toucan.db :as db]))
 
@@ -93,22 +89,28 @@
             :schema "default"
             :fields #{{:name          "name",
                        :database-type "varchar(255)"
-                       :base-type     :type/Text}
+                       :base-type     :type/Text
+                       :database-position 1}
                       {:name          "latitude"
                        :database-type "double"
-                       :base-type     :type/Float}
+                       :base-type     :type/Float
+                       :database-position 3}
                       {:name          "longitude"
                        :database-type "double"
-                       :base-type     :type/Float}
+                       :base-type     :type/Float
+                       :database-position 4}
                       {:name          "price"
                        :database-type "integer"
-                       :base-type     :type/Integer}
+                       :base-type     :type/Integer
+                       :database-position 5}
                       {:name          "category_id"
                        :database-type "integer"
-                       :base-type     :type/Integer}
+                       :base-type     :type/Integer
+                       :database-position 2}
                       {:name          "id"
                        :database-type "integer"
-                       :base-type     :type/Integer}}}
+                       :base-type     :type/Integer
+                       :database-position 0}}}
            (driver/describe-table :presto (mt/db) (db/select-one 'Table :id (mt/id :venues)))))))
 
 (deftest table-rows-sample-test
@@ -119,7 +121,8 @@
             ["Wurstküche"]
             ["Brite Spot Family Restaurant"]]
            (take 5 (metadata-queries/table-rows-sample (Table (mt/id :venues))
-                     [(Field (mt/id :venues :name))]))))))
+                     [(Field (mt/id :venues :name))]
+                     (constantly conj)))))))
 
 
 ;;; APPLY-PAGE
@@ -139,23 +142,35 @@
     {:page {:page  2
             :items 5}}))
 
-(expect
-  "Hmm, we couldn't connect to the database. Make sure your host and port settings are correct"
-  (try
-    (let [details {:ssl            false
-                   :password       "changeme"
-                   :tunnel-host    "localhost"
-                   :tunnel-pass    "BOGUS-BOGUS"
-                   :catalog        "BOGUS"
-                   :host           "localhost"
-                   :port           9999
-                   :tunnel-enabled true
-                   :tunnel-port    22
-                   :tunnel-user    "bogus"}]
-      (tu.log/suppress-output
-        (driver.u/can-connect-with-details? :presto details :throw-exceptions)))
-    (catch Exception e
-      (.getMessage e))))
+(deftest test-connect-via-tunnel
+  (testing "connection fails as expected"
+    (mt/test-driver
+     :presto
+     (is (thrown?
+          java.net.ConnectException
+          (try
+            (let [engine :presto
+                  details {:ssl            false
+                           :password       "changeme"
+                           :tunnel-host    "localhost"
+                           :tunnel-pass    "BOGUS-BOGUS"
+                           :catalog        "BOGUS"
+                           :host           "localhost"
+                           :port           9999
+                           :tunnel-enabled true
+                           ;; we want to use a bogus port here on purpose -
+                           ;; so that locally, it gets a ConnectionRefused,
+                           ;; and in CI it does too. Apache's SSHD library
+                           ;; doesn't wrap every exception in an SshdException
+                           :tunnel-port    21212
+                           :tunnel-user    "bogus"}]
+              (tu.log/suppress-output
+               (driver.u/can-connect-with-details? engine details :throw-exceptions)))
+            (catch Throwable e
+              (loop [^Throwable e e]
+                (or (when (instance? java.net.ConnectException e)
+                      (throw e))
+                    (some-> (.getCause e) recur))))))))))
 
 (deftest db-default-timezone-test
   (mt/test-driver :presto
@@ -195,3 +210,29 @@
                     :parameters [{:type   "date/single"
                                   :target ["variable" ["template-tag" "date"]]
                                   :value  "2014-08-02"}]}))))))))
+
+(deftest splice-strings-test
+  (mt/test-driver :presto
+    (let [query (mt/mbql-query venues
+                  {:aggregation [[:count]]
+                   :filter      [:= $name "wow"]})]
+      (testing "The native query returned in query results should use user-friendly splicing"
+        (is (= (str "SELECT count(*) AS \"count\" "
+                    "FROM \"default\".\"test_data_venues\" "
+                    "WHERE \"default\".\"test_data_venues\".\"name\" = 'wow'")
+               (:query (qp/query->native-with-spliced-params query))
+               (-> (qp/process-query query) :data :native_form :query))))
+
+      (testing "When actually running the query we should use paranoid splicing and hex-encode strings"
+        (let [orig    @#'presto/execute-presto-query
+              the-sql (atom nil)]
+          (with-redefs [presto/execute-presto-query (fn [details sql canceled-chan respond]
+                                                      (reset! the-sql sql)
+                                                      (with-redefs [presto/execute-presto-query orig]
+                                                        (orig details sql canceled-chan respond)))]
+            (qp/process-query query)
+            (is (= (str "-- Metabase\n"
+                        "SELECT count(*) AS \"count\" "
+                        "FROM \"default\".\"test_data_venues\" "
+                        "WHERE \"default\".\"test_data_venues\".\"name\" = from_utf8(from_hex('776f77'))")
+                   @the-sql))))))))

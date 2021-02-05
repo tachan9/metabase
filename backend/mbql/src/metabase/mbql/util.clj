@@ -2,14 +2,13 @@
   "Utilitiy functions for working with MBQL queries."
   (:refer-clojure :exclude [replace])
   (:require [clojure.string :as str]
-            [java-time
-             [amount :as t.amount]
-             [core :as t.core]]
+            [java-time.amount :as t.amount]
+            [java-time.core :as t.core]
             [metabase.mbql.schema :as mbql.s]
+            [metabase.mbql.schema.helpers :as mbql.s.helpers]
             [metabase.mbql.util.match :as mbql.match]
-            [metabase.util
-             [i18n :refer [tru]]
-             [schema :as su]]
+            [metabase.util.i18n :refer [tru]]
+            [metabase.util.schema :as su]
             [schema.core :as s]))
 
 (defn qualified-name
@@ -281,6 +280,13 @@
     [:is-null field]  [:=  field nil]
     [:not-null field] [:!= field nil]))
 
+(defn desugar-is-empty-and-not-empty
+  "Rewrite `:is-empty` and `:not-empty` filter clauses as simpler `:=` and `:!=`, respectively."
+  [m]
+  (replace m
+    [:is-empty field]  [:or  [:=  field nil] [:=  field ""]]
+    [:not-empty field] [:and [:!= field nil] [:!= field ""]]))
+
 (defn desugar-time-interval
   "Rewrite `:time-interval` filter clauses as simpler ones like `:=` or `:between`."
   [m]
@@ -357,6 +363,7 @@
       desugar-does-not-contain
       desugar-time-interval
       desugar-is-null-and-not-null
+      desugar-is-empty-and-not-empty
       desugar-inside
       simplify-compound-filter))
 
@@ -418,9 +425,7 @@
     :else
     source-table-id))
 
-(s/defn unwrap-field-clause :- (s/if (partial is-clause? :field-id)
-                                 mbql.s/field-id
-                                 mbql.s/field-literal)
+(s/defn unwrap-field-clause :- (mbql.s.helpers/one-of mbql.s/field-id mbql.s/field-literal)
   "Un-wrap a `Field` clause and return the lowest-level clause it wraps, either a `:field-id` or `:field-literal`."
   [clause :- mbql.s/Field]
   (match-one clause
@@ -435,7 +440,7 @@
   "Unwrap a Field `clause`, if it's something that can be unwrapped (i.e. something that is, or wraps, a `:field-id` or
   `:field-literal`). Otherwise return `clause` as-is."
   [clause]
-  (if (is-clause? #{:field-id :fk-> :field-literal :datetime-field :binning-strategy} clause)
+  (if (is-clause? #{:field-id :fk-> :field-literal :datetime-field :binning-strategy :joined-field} clause)
     (unwrap-field-clause clause)
     clause))
 
@@ -446,10 +451,9 @@
     (field-clause->id-or-literal [:datetime-field [:field-id 100] ...]) ; -> 100
     (field-clause->id-or-literal [:field-id 100])                       ; -> 100
 
-  For expressions (or any other clauses) this returns the clause as-is, so as to facilitate the primary use case of
-  comparing Field clauses."
+  For expressions returns the expression name."
   [clause :- mbql.s/Field]
-  (second (unwrap-field-clause clause)))
+  (second (maybe-unwrap-field-clause clause)))
 
 (s/defn add-order-by-clause :- mbql.s/MBQLQuery
   "Add a new `:order-by` clause to an MBQL `inner-query`. If the new order-by clause references a Field that is

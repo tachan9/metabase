@@ -5,9 +5,8 @@
             [medley.core :as m]
             [metabase.api.common :as api]
             [metabase.automagic-dashboards.filters :as filters]
-            [metabase.models
-             [card :as card]
-             [collection :as collection]]
+            [metabase.models.card :as card]
+            [metabase.models.collection :as collection]
             [metabase.query-processor.util :as qp.util]
             [metabase.util.i18n :refer [trs]]
             [toucan.db :as db]))
@@ -274,10 +273,10 @@
                                      ;; Height doesn't need to be precise, just some
                                      ;; safe upper bound.
                                      (make-grid grid-width (* n grid-width))]))]
-     (log/info (trs "Adding {0} cards to dashboard {1}:\n{2}"
-                    (count cards)
-                    title
-                    (str/join "; " (map :title cards))))
+     (log/debug (trs "Adding {0} cards to dashboard {1}:\n{2}"
+                     (count cards)
+                     title
+                     (str/join "; " (map :title cards))))
      (cond-> dashboard
        (not-empty filters) (filters/add-filters filters max-filters)))))
 

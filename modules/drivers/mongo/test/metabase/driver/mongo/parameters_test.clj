@@ -1,16 +1,13 @@
 (ns metabase.driver.mongo.parameters-test
-  (:require [cheshire
-             [core :as json]
-             [generate :as json.generate]]
-            [clojure
-             [string :as str]
-             [test :refer :all]]
+  (:require [cheshire.core :as json]
+            [cheshire.generate :as json.generate]
+            [clojure.string :as str]
+            [clojure.test :refer :all]
             [java-time :as t]
-            [metabase
-             [query-processor :as qp]
-             [test :as mt]]
             [metabase.driver.common.parameters :as common.params]
-            [metabase.driver.mongo.parameters :as params])
+            [metabase.driver.mongo.parameters :as params]
+            [metabase.query-processor :as qp]
+            [metabase.test :as mt])
   (:import com.fasterxml.jackson.core.JsonGenerator))
 
 (deftest ->utc-instant-test
@@ -167,9 +164,9 @@
 (deftest e2e-field-filter-test
   (mt/test-driver :mongo
     (testing "date ranges"
-      (is (= [[295 7 97 "2014-03-01T00:00:00Z"]
-              [642 8 9 "2014-03-02T00:00:00Z"]
-              [775 4 13 "2014-03-01T00:00:00Z"]]
+      (is (= [[295 "2014-03-01T00:00:00Z" 7 97]
+              [642 "2014-03-02T00:00:00Z" 8 9]
+              [775 "2014-03-01T00:00:00Z" 4 13]]
              (mt/rows
                (qp/process-query
                  (mt/query checkins
@@ -204,7 +201,7 @@
                                   :target [:dimension [:template-tag "id"]]
                                   :value  "1,2,3"}]}))))))
     (testing "param not supplied"
-      (is (= [[1 5 12 "2014-04-07T00:00:00Z"]]
+      (is (= [[1 "2014-04-07T00:00:00Z" 5 12]]
              (mt/rows
                (qp/process-query
                  (mt/query checkins

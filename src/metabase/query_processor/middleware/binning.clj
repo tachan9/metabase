@@ -2,18 +2,14 @@
   "Middleware that handles `binning-strategy` Field clauses. This adds a `resolved-options` map to every
   `binning-strategy` clause that contains the information query processors will need in order to perform binning."
   (:require [clojure.math.numeric-tower :refer [ceil expt floor]]
-            [metabase
-             [public-settings :as public-settings]
-             [util :as u]]
-            [metabase.mbql
-             [schema :as mbql.s]
-             [util :as mbql.u]]
-            [metabase.query-processor
-             [error-type :as error-type]
-             [store :as qp.store]]
-            [metabase.util
-             [i18n :refer [tru]]
-             [schema :as su]]
+            [metabase.mbql.schema :as mbql.s]
+            [metabase.mbql.util :as mbql.u]
+            [metabase.public-settings :as public-settings]
+            [metabase.query-processor.error-type :as error-type]
+            [metabase.query-processor.store :as qp.store]
+            [metabase.util :as u]
+            [metabase.util.i18n :refer [tru]]
+            [metabase.util.schema :as su]
             [schema.core :as s]))
 
 ;;; ----------------------------------------------- Extracting Bounds ------------------------------------------------
@@ -74,7 +70,7 @@
 (s/defn ^:private resolve-default-strategy :- [(s/one (s/enum :bin-width :num-bins) "strategy")
                                                (s/one {:bin-width s/Num, :num-bins su/IntGreaterThanZero} "opts")]
   "Determine the approprate strategy & options to use when `:default` strategy was specified."
-  [metadata :- {:special_type (s/maybe su/FieldType), s/Any s/Any}, min-value :- s/Num, max-value :- s/Num]
+  [metadata :- {(s/optional-key :special_type) (s/maybe su/FieldType), s/Any s/Any}, min-value :- s/Num, max-value :- s/Num]
   (if (isa? (:special_type metadata) :type/Coordinate)
     (let [bin-width (public-settings/breakout-bin-width)]
       [:bin-width
@@ -195,8 +191,8 @@
         metadata                        (matching-metadata field-id-or-name source-metadata)
         {:keys [min-value max-value]
          :as   min-max}                 (extract-bounds (when (integer? field-id-or-name) field-id-or-name)
-         (:fingerprint metadata)
-         field-id->filters)
+                                                        (:fingerprint metadata)
+                                                        field-id->filters)
         [new-strategy resolved-options] (resolve-options strategy strategy-param metadata min-value max-value)
         resolved-options                (merge min-max resolved-options)]
     ;; Bail out and use unmodifed version if we can't converge on a nice version.

@@ -1,13 +1,12 @@
 (ns metabase.server
-  (:require [clojure
-             [core :as core]
-             [string :as str]]
+  "Code related to configuring, starting, and stopping the Metabase Jetty web server."
+  (:require [clojure.core :as core]
+            [clojure.string :as str]
             [clojure.tools.logging :as log]
             [medley.core :as m]
-            [metabase
-             [config :as config]
-             [util :as u]]
+            [metabase.config :as config]
             [metabase.server.protocols :as protocols]
+            [metabase.util :as u]
             [metabase.util.i18n :refer [trs]]
             [ring.adapter.jetty :as ring-jetty]
             [ring.util.servlet :as servlet])
@@ -34,6 +33,8 @@
             :min-threads   (config/config-int :mb-jetty-minthreads)
             :max-queued    (config/config-int :mb-jetty-maxqueued)
             :max-idle-time (config/config-int :mb-jetty-maxidletime)})
+    (config/config-int :mb-jetty-request-header-size) (assoc :request-header-size (config/config-int
+                                                                                    :mb-jetty-request-header-size))
     (config/config-str :mb-jetty-daemon) (assoc :daemon? (config/config-bool :mb-jetty-daemon))
     (config/config-str :mb-jetty-ssl)    (-> (assoc :ssl? true)
                                              (merge (jetty-ssl-config)))))
@@ -100,7 +101,7 @@
   "Start the embedded Jetty web server. Returns `:started` if a new server was started; `nil` if there was already a
   running server.
 
-    (start-web-server! #'metabase.handler/app)"
+    (start-web-server! #'metabase.server.handler/app)"
   [handler]
   (when-not (instance)
     ;; NOTE: we always start jetty w/ join=false so we can start the server first then do init in the background

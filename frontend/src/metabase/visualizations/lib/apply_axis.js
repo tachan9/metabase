@@ -3,7 +3,9 @@
 import _ from "underscore";
 import d3 from "d3";
 import dc from "dc";
-import moment from "moment";
+import moment from "moment-timezone";
+
+import { t } from "ttag";
 
 import { datasetContainsNoResults } from "metabase/lib/dataset";
 import { formatValue } from "metabase/lib/formatting";
@@ -115,6 +117,11 @@ export function applyChartTimeseriesXAxis(
     if (dimensionColumn.unit == null) {
       dimensionColumn = { ...dimensionColumn, unit: dataInterval.interval };
     }
+    const waterfallTotalX =
+      firstSeries.card.display === "waterfall" &&
+      chart.settings["waterfall.show_total"]
+        ? xValues[xValues.length - 1]
+        : null;
 
     // extract xInterval timezone for updating tickInterval
     const { timezone } = tickInterval;
@@ -122,12 +129,26 @@ export function applyChartTimeseriesXAxis(
     // special handling for weeks
     // TODO: are there any other cases where we should do this?
     let tickFormatUnit = dimensionColumn.unit;
+    const tickFormat = timestamp => {
+      const { column, ...columnSettings } = chart.settings.column(
+        dimensionColumn,
+      );
+      return waterfallTotalX && waterfallTotalX.isSame(timestamp)
+        ? t`Total`
+        : formatValue(timestamp, {
+            ...columnSettings,
+            column: { ...column, unit: tickFormatUnit },
+            type: "axis",
+            compact: chart.settings["graph.x_axis.axis_enabled"] === "compact",
+          });
+    };
     if (dataInterval.interval === "week") {
       // if tick interval is compressed then show months instead of weeks because they're nicer formatted
       const newTickInterval = computeTimeseriesTicksInterval(
         xDomain,
         tickInterval,
         chart.width(),
+        tickFormat,
       );
       if (
         newTickInterval.interval !== tickInterval.interval ||
@@ -136,23 +157,23 @@ export function applyChartTimeseriesXAxis(
         tickFormatUnit = "month";
         tickInterval = { interval: "month", count: 1, timezone };
       }
+      const domainStart = xDomain[0];
+      const startOfWeek = domainStart.clone().startOf("week");
+      const shiftDays = domainStart.diff(startOfWeek, "days");
+      tickInterval = { ...tickInterval, shiftDays };
     }
 
-    chart.xAxis().tickFormat(timestamp => {
-      const { column, ...columnSettings } = chart.settings.column(
-        dimensionColumn,
-      );
-      return formatValue(timestamp, {
-        ...columnSettings,
-        column: { ...column, unit: tickFormatUnit },
-        type: "axis",
-        compact: chart.settings["graph.x_axis.axis_enabled"] === "compact",
-      });
-    });
+    chart.xAxis().tickFormat(tickFormat);
 
     // Compute a sane interval to display based on the data granularity, domain, and chart width
     tickInterval = {
-      ...computeTimeseriesTicksInterval(xDomain, tickInterval, chart.width()),
+      ...tickInterval,
+      ...computeTimeseriesTicksInterval(
+        xDomain,
+        tickInterval,
+        chart.width(),
+        tickFormat,
+      ),
       timezone,
     };
   }
@@ -207,6 +228,12 @@ export function applyChartQuantitativeXAxis(
   );
   const dimensionColumn = firstSeries.data.cols[0];
 
+  const waterfallTotalX =
+    firstSeries.card.display === "waterfall" &&
+    chart.settings["waterfall.show_total"]
+      ? xValues[xValues.length - 1]
+      : null;
+
   if (chart.settings["graph.x_axis.labels_enabled"]) {
     chart.xAxisLabel(
       chart.settings["graph.x_axis.title_text"] ||
@@ -221,6 +248,9 @@ export function applyChartQuantitativeXAxis(
     adjustXAxisTicksIfNeeded(chart.xAxis(), chart.width(), xValues);
 
     chart.xAxis().tickFormat(d => {
+      if (waterfallTotalX && waterfallTotalX === d) {
+        return t`Total`;
+      }
       // don't show ticks that aren't multiples of xInterval
       if (isMultipleOf(d, xInterval)) {
         return formatValue(d, {

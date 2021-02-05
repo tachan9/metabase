@@ -1,8 +1,7 @@
 (ns metabase.query-processor.middleware.cumulative-aggregations
   "Middlware for handling cumulative count and cumulative sum aggregations."
-  (:require [metabase.mbql
-             [schema :as mbql.s]
-             [util :as mbql.u]]
+  (:require [metabase.mbql.schema :as mbql.s]
+            [metabase.mbql.util :as mbql.u]
             [schema.core :as s]))
 
 (defn- diff-indecies
@@ -37,7 +36,7 @@
    row
 
    :else
-   (recur more last-row (update (vec row) index (partial + (nth last-row index))))))
+   (recur more last-row (update (vec row) index (partial (fnil + 0 0) (nth last-row index))))))
 
 (defn- cumulative-ags-xform [replaced-indecies rf]
   {:pre [(fn? rf)]}

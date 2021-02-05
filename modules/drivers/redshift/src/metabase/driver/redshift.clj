@@ -1,19 +1,22 @@
 (ns metabase.driver.redshift
   "Amazon Redshift Driver."
-  (:require [clojure.java.jdbc :as jdbc]
+  (:require [cheshire.core :as json]
+            [clojure.java.jdbc :as jdbc]
             [clojure.string :as str]
             [clojure.tools.logging :as log]
             [honeysql.core :as hsql]
             [metabase.driver :as driver]
             [metabase.driver.common :as driver.common]
-            [metabase.driver.sql-jdbc
-             [connection :as sql-jdbc.conn]
-             [execute :as sql-jdbc.execute]]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
+            [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
             [metabase.driver.sql-jdbc.execute.legacy-impl :as legacy]
             [metabase.driver.sql.query-processor :as sql.qp]
-            [metabase.util
-             [honeysql-extensions :as hx]
-             [i18n :refer [trs]]])
+            [metabase.mbql.util :as mbql.u]
+            [metabase.public-settings :as pubset]
+            [metabase.query-processor.store :as qp.store]
+            [metabase.query-processor.util :as qputil]
+            [metabase.util.honeysql-extensions :as hx]
+            [metabase.util.i18n :refer [trs]])
   (:import [java.sql ResultSet Types]
            java.time.OffsetTime))
 
@@ -79,6 +82,11 @@
   [& args]
   (apply driver.common/current-db-time args))
 
+(defmethod driver/db-start-of-week :redshift
+  [_]
+  :sunday)
+
+
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                           metabase.driver.sql impls                                            |
@@ -130,7 +138,19 @@
 (defmethod sql.qp/->honeysql [:redshift :replace]
   [driver [_ arg pattern replacement]]
   (hsql/call :replace (sql.qp/->honeysql driver arg) (splice-raw-string-value driver pattern)
-              (splice-raw-string-value driver replacement)))
+             (splice-raw-string-value driver replacement)))
+
+(defmethod sql.qp/->honeysql [:redshift :concat]
+  [driver [_ & args]]
+  (->> args
+       (map (partial sql.qp/->honeysql driver))
+       (reduce (partial hsql/call :concat))))
+
+(defmethod sql.qp/->honeysql [:redshift :concat]
+  [driver [_ & args]]
+  (->> args
+       (map (partial sql.qp/->honeysql driver))
+       (reduce (partial hsql/call :concat))))
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                         metabase.driver.sql-jdbc impls                                         |
@@ -152,6 +172,36 @@
  [:postgres Types/TIMESTAMP])
 
 (prefer-method
+ sql-jdbc.execute/read-column-thunk
+ [::legacy/use-legacy-classes-for-read-and-set Types/TIME]
+ [:postgres Types/TIME])
+
+(prefer-method
  sql-jdbc.execute/set-parameter
  [::legacy/use-legacy-classes-for-read-and-set OffsetTime]
  [:postgres OffsetTime])
+
+(defn- field->parameter-value
+  "Map fields used in parameters to parameter `:value`s."
+  [{:keys [user-parameters]}]
+  (into {}
+        (keep (fn [param]
+                (if (contains? param :name)
+                  [(:name param) (:value param)]
+
+                  (when-let [field-id (mbql.u/match-one param
+                                        [:field-id field-id] (when (contains? (set &parents) :dimension)
+                                                               field-id))]
+                    [(:name (qp.store/field field-id)) (:value param)]))))
+        user-parameters))
+
+(defmethod qputil/query->remark :redshift
+  [_ {{:keys [executed-by query-hash card-id]} :info, :as query}]
+  (str "/* partner: \"metabase\", "
+       (json/generate-string {:dashboard_id        nil ;; requires metabase/metabase#11909
+                              :chart_id            card-id
+                              :optional_user_id    executed-by
+                              :optional_account_id (pubset/site-uuid)
+                              :filter_values       (field->parameter-value query)})
+       " */ "
+       (qputil/default-query->remark query)))

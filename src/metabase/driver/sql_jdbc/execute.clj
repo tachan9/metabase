@@ -8,21 +8,18 @@
             [clojure.string :as str]
             [clojure.tools.logging :as log]
             [java-time :as t]
-            [metabase
-             [driver :as driver]
-             [util :as u]]
-            [metabase.driver.sql-jdbc
-             [connection :as sql-jdbc.conn]
-             [sync :as sql-jdbc.sync]]
+            [metabase.driver :as driver]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
             [metabase.driver.sql-jdbc.execute.old-impl :as execute.old]
+            [metabase.driver.sql-jdbc.sync.interface :as sql-jdbc.sync]
             [metabase.mbql.util :as mbql.u]
-            [metabase.query-processor
-             [context :as context]
-             [interface :as qp.i]
-             [reducible :as qp.reducible]
-             [store :as qp.store]
-             [timezone :as qp.timezone]
-             [util :as qputil]]
+            [metabase.query-processor.context :as context]
+            [metabase.query-processor.interface :as qp.i]
+            [metabase.query-processor.reducible :as qp.reducible]
+            [metabase.query-processor.store :as qp.store]
+            [metabase.query-processor.timezone :as qp.timezone]
+            [metabase.query-processor.util :as qputil]
+            [metabase.util :as u]
             [metabase.util.i18n :refer [trs]]
             [potemkin :as p])
   (:import [java.sql Connection JDBCType PreparedStatement ResultSet ResultSetMetaData Types]
@@ -177,11 +174,11 @@
 
 (defn- set-object
   ([^PreparedStatement prepared-statement, ^Integer index, object]
-   (log/tracef "(set-object prepared-statement %d ^%s %s)" index (.getName (class object)) (pr-str object))
+   (log/tracef "(set-object prepared-statement %d ^%s %s)" index (some-> object class .getName) (pr-str object))
    (.setObject prepared-statement index object))
 
   ([^PreparedStatement prepared-statement, ^Integer index, object, ^Integer target-sql-type]
-   (log/tracef "(set-object prepared-statement %d ^%s %s java.sql.Types/%s)" index (.getName (class object))
+   (log/tracef "(set-object prepared-statement %d ^%s %s java.sql.Types/%s)" index (some-> object class .getName)
                (pr-str object) (.getName (JDBCType/valueOf target-sql-type)))
    (.setObject prepared-statement index object target-sql-type)))
 
@@ -376,20 +373,23 @@
 
 (defn execute-reducible-query
   "Default impl of `execute-reducible-query` for sql-jdbc drivers."
-  {:added "0.35.0", :arglists '([driver query context respond])}
-  [driver {{sql :query, params :params} :native, :as outer-query} context respond]
-  {:pre [(string? sql) (seq sql)]}
-  (let [remark   (qputil/query->remark outer-query)
-        sql      (str "-- " remark "\n" sql)
-        max-rows (or (mbql.u/query->max-rows-limit outer-query)
-                     qp.i/absolute-max-results)]
-    (with-open [conn (connection-with-timezone driver (qp.store/database) (qp.timezone/report-timezone-id-if-supported))
-                stmt (doto (prepared-statement* driver conn sql params (context/canceled-chan context))
-                       (.setMaxRows max-rows))
-                rs   (execute-query! driver stmt)]
-      (let [rsmeta           (.getMetaData rs)
-            results-metadata {:cols (column-metadata driver rsmeta)}]
-        (respond results-metadata (reducible-rows driver rs rsmeta (context/canceled-chan context)))))))
+  {:added "0.35.0", :arglists '([driver query context respond] [driver sql params max-rows context respond])}
+  ([driver {{sql :query, params :params} :native, :as outer-query} context respond]
+   {:pre [(string? sql) (seq sql)]}
+   (let [remark   (qputil/query->remark driver outer-query)
+         sql      (str "-- " remark "\n" sql)
+         max-rows (or (mbql.u/query->max-rows-limit outer-query)
+                      qp.i/absolute-max-results)]
+     (execute-reducible-query driver sql params max-rows context respond)))
+
+  ([driver sql params max-rows context respond]
+   (with-open [conn (connection-with-timezone driver (qp.store/database) (qp.timezone/report-timezone-id-if-supported))
+               stmt (doto (prepared-statement* driver conn sql params (context/canceled-chan context))
+                      (.setMaxRows max-rows))
+               rs   (execute-query! driver stmt)]
+     (let [rsmeta           (.getMetaData rs)
+           results-metadata {:cols (column-metadata driver rsmeta)}]
+       (respond results-metadata (reducible-rows driver rs rsmeta (context/canceled-chan context)))))))
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                       Convenience Imports from Old Impl                                        |

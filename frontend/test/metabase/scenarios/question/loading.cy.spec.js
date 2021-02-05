@@ -1,8 +1,10 @@
 import { signInAsAdmin, restore } from "__support__/cypress";
 
 describe("scenarios > question > loading behavior", () => {
-  before(restore);
-  beforeEach(signInAsAdmin);
+  beforeEach(() => {
+    restore();
+    signInAsAdmin();
+  });
 
   it("should preload tables on the new question page", () => {
     cy.server();
@@ -29,7 +31,11 @@ describe("scenarios > question > loading behavior", () => {
   it("should incrementally load data if not preloaded", () => {
     cy.server();
     // stub out the preload call to fetch all tables
-    cy.route({ url: "/api/database?include=tables", response: [] });
+    cy.route({
+      url: "/api/database?include=tables",
+      status: 500,
+      response: {},
+    });
     // let the other preload happen since it matches the actual call from the component
     cy.route({ url: "/api/database?saved=true" }).as("fetch1");
     cy.visit("/question/new");

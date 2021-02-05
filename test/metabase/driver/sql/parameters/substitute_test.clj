@@ -1,18 +1,17 @@
 (ns metabase.driver.sql.parameters.substitute-test
   (:require [clojure.test :refer :all]
             [java-time :as t]
-            [metabase
-             [driver :as driver]
-             [models :refer [Field]]
-             [query-processor :as qp]
-             [query-processor-test :as qp.test]
-             [test :as mt]]
+            [metabase.driver :as driver]
             [metabase.driver.common.parameters :as i]
             [metabase.driver.common.parameters.parse :as parse]
             [metabase.driver.sql.parameters.substitute :as substitute]
             [metabase.mbql.normalize :as normalize]
+            [metabase.models :refer [Field]]
+            [metabase.query-processor :as qp]
+            [metabase.query-processor-test :as qp.test]
             [metabase.query-processor.middleware.parameters.native :as native]
             [metabase.query-processor.test-util :as qp.test-util]
+            [metabase.test :as mt]
             [metabase.test.data.datasets :as datasets]
             [metabase.util.schema :as su]
             [schema.core :as s]))
@@ -114,9 +113,18 @@
 
 (deftest substitute-referenced-card-query-test
   (testing "Referenced card query substitution"
-    (let [query ["select * from " (param "#123")]]
-      (is (= ["select * from (select 1 `x`)" nil]
-             (substitute query {"#123" (i/->ReferencedCardQuery 123 "select 1 `x`")}))))))
+    (let [query ["SELECT * FROM " (param "#123")]]
+      (is (= ["SELECT * FROM (SELECT 1 `x`)" nil]
+             (substitute query {"#123" (i/->ReferencedCardQuery 123 "SELECT 1 `x`")}))))))
+
+
+;;; --------------------------------------------- Native Query Snippets ----------------------------------------------
+
+(deftest substitute-native-query-snippets-test
+  (testing "Native query snippet substitution"
+    (let [query ["SELECT * FROM test_scores WHERE " (param "snippet:symbol_is_A")]]
+      (is (= ["SELECT * FROM test_scores WHERE symbol = 'A'" nil]
+             (substitute query {"snippet:symbol_is_A" (i/->ReferencedQuerySnippet 123 "symbol = 'A'")}))))))
 
 
 ;;; ------------------------------------------ simple substitution — {{x}} ------------------------------------------

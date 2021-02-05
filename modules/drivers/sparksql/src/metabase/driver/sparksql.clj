@@ -1,26 +1,23 @@
 (ns metabase.driver.sparksql
-  (:require [clojure
-             [set :as set]
-             [string :as str]]
-            [clojure.java.jdbc :as jdbc]
-            [honeysql
-             [core :as hsql]
-             [helpers :as h]]
+  (:require [clojure.java.jdbc :as jdbc]
+            [clojure.set :as set]
+            [clojure.string :as str]
+            [honeysql.core :as hsql]
+            [honeysql.helpers :as h]
+            [medley.core :as m]
             [metabase.driver :as driver]
-            [metabase.driver.sql
-             [query-processor :as sql.qp]
-             [util :as sql.u]]
-            [metabase.driver.sql-jdbc
-             [common :as sql-jdbc.common]
-             [connection :as sql-jdbc.conn]
-             [execute :as sql-jdbc.execute]
-             [sync :as sql-jdbc.sync]]
+            [metabase.driver.hive-like :as hive-like]
+            [metabase.driver.sql-jdbc.common :as sql-jdbc.common]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
+            [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
+            [metabase.driver.sql-jdbc.sync :as sql-jdbc.sync]
+            [metabase.driver.sql.query-processor :as sql.qp]
+            [metabase.driver.sql.util :as sql.u]
             [metabase.driver.sql.util.unprepare :as unprepare]
             [metabase.mbql.util :as mbql.u]
             [metabase.models.field :refer [Field]]
-            [metabase.query-processor
-             [store :as qp.store]
-             [util :as qputil]]
+            [metabase.query-processor.store :as qp.store]
+            [metabase.query-processor.util :as qputil]
             [metabase.util.honeysql-extensions :as hx])
   (:import [java.sql Connection ResultSet]))
 
@@ -118,19 +115,21 @@
                                                       (dash-to-underscore schema)
                                                       (dash-to-underscore table-name)))])]
        (set
-        (for [{col-name :col_name, data-type :data_type, :as result} results
-              :when                                                  (valid-describe-table-row? result)]
-          {:name          col-name
-           :database-type data-type
-           :base-type     (sql-jdbc.sync/database-type->base-type :hive-like (keyword data-type))}))))})
+        (for [[idx {col-name :col_name, data-type :data_type, :as result}] (m/indexed results)
+              :when (valid-describe-table-row? result)]
+          {:name              col-name
+           :database-type     data-type
+           :base-type         (sql-jdbc.sync/database-type->base-type :hive-like (keyword data-type))
+           :database-position idx}))))})
 
 ;; bound variables are not supported in Spark SQL (maybe not Hive either, haven't checked)
 (defmethod driver/execute-reducible-query :sparksql
   [driver {:keys [database settings], {sql :query, :keys [params], :as inner-query} :native, :as outer-query} context respond]
   (let [inner-query (-> (assoc inner-query
-                               :remark (qputil/query->remark outer-query)
+                               :remark (qputil/query->remark :sparksql outer-query)
                                :query  (if (seq params)
-                                         (unprepare/unprepare driver (cons sql params))
+                                         (binding [hive-like/*param-splice-style* :paranoid]
+                                           (unprepare/unprepare driver (cons sql params)))
                                          sql)
                                :max-rows (mbql.u/query->max-rows-limit outer-query))
                         (dissoc :params))
@@ -164,7 +163,6 @@
       (catch Throwable e
         (.close stmt)
         (throw e)))))
-
 
 (doseq [feature [:basic-aggregations
                  :binning
